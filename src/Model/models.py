@@ -35,7 +35,7 @@ features = [col for col in df.columns if col != 'target' and col != 'RiskPerform
 
 # Modelle
 dt_model = DecisionTreeClassifier(max_depth=7, random_state=42)
-rf_model = RandomForestClassifier(n_estimators=1000, random_state=42)
+rf_model = RandomForestClassifier(n_estimators=530, class_weight="balanced", max_depth=30, max_features=0.38, min_samples_leaf=4, min_samples_split=7, random_state=42)
 
 X = df[features]
 y = df['target']
@@ -45,3 +45,14 @@ X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.3, random_
     
 rf_model.fit(X_train, y_train)    
 dt_model.fit(X_train, y_train)
+
+# ---- für LIME ----
+from sklearn.impute import SimpleImputer
+from lime.lime_tabular import LimeTabularExplainer
+
+imputer = SimpleImputer(strategy="median").fit(X_train)
+X_train_imp = imputer.transform(X_train)
+
+explainer = LimeTabularExplainer(training_data=X_train_imp, feature_names=features, class_names=["Zahlungsprobleme","Zuverlässiger Zahler"], mode="classification", discretize_continuous=True, random_state=42)
+
+median_dict = X_train.median().to_dict()
