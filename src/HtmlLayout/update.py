@@ -6,6 +6,14 @@ import dash_bootstrap_components as dbc
 import base64
 import pydotplus
 from IPython.display import Image
+from sklearn.model_selection import train_test_split
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.tree import DecisionTreeClassifier, export_graphviz
+from sklearn.metrics import confusion_matrix, classification_report, roc_curve, auc
+from src.Model.models import df,rf_model,dt_model,features,y_test,X_test
+from src.Explanations import get_feature_explanation,simplified_terms,simplify_term
+from src.HtmlLayout.index import app
+
 
 @app.callback(
     [Output('visualization-content', 'children'),
@@ -17,7 +25,6 @@ from IPython.display import Image
      State('visualization-dropdown', 'value')],
 )
 # Callback zum Aktualisieren der Visualisierung
-
 def update_visualization(n_clicks, risk_range, min_trades, selected_viz):
     # Daten filtern
     filtered_df = df[(df['ExternalRiskEstimate'] >= risk_range[0]) & 

@@ -31,24 +31,18 @@ def Datenerstellung():
 
 #Pandas DATA HANDLING
 df=Datenerstellung()
+features = [col for col in df.columns if col != 'target' and col != 'RiskPerformance']
 
 # Modelle
 dt_model = DecisionTreeClassifier(max_depth=7, random_state=42)
 rf_model = RandomForestClassifier(n_estimators=1000, random_state=42)
 
+X = df[features]
+y = df['target']
 
-def train():
-       
-
-    features = [col for col in df.columns if col != 'target' and col != 'RiskPerformance']
-    X = df[features]
-    y = df['target']
-
-    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.3, random_state=42)
+X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.3, random_state=42)
 
     
-    rf_model.fit(X_train, y_train)
+rf_model.fit(X_train, y_train)
     
-    dt_model.fit(X_train, y_train)
-    
-    print("Train fertig")
+dt_model.fit(X_train, y_train)

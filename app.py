@@ -1,11 +1,4 @@
-from src.Model.models import train
 from src.HtmlLayout.index import app
-
-
-
-
+import src.HtmlLayout.update
 if __name__ == '__main__':
-    # Modelle
-    train()
-    
     app.run(debug=True)
