@@ -7,7 +7,7 @@ import dash_bootstrap_components as dbc
 from IPython.display import Image
 from src.Model.models import dt_model,rf_model,df
 
-app = dash.Dash(__name__, external_stylesheets=[dbc.themes.BOOTSTRAP])
+app = dash.Dash(__name__, external_stylesheets=[dbc.themes.BOOTSTRAP], suppress_callback_exceptions=True)
 
 # Layout
 app.layout = dbc.Container([
