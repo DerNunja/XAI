@@ -8,4 +8,4 @@ if __name__ == '__main__':
     # Modelle
     train()
     
-    app.run()
+    app.run(debug=True)
