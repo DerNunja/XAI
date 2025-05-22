@@ -1,210 +1,20 @@
-import pandas as pd
 import numpy as np
 import plotly.express as px
 import plotly.graph_objects as go
-import dash
 from dash import dcc, html, Input, Output, State, callback
 import dash_bootstrap_components as dbc
+import base64
+import pydotplus
+from IPython.display import Image
 from sklearn.model_selection import train_test_split
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.tree import DecisionTreeClassifier, export_graphviz
 from sklearn.metrics import confusion_matrix, classification_report, roc_curve, auc
-import io
-import base64
-import pydotplus
-from IPython.display import Image
+from src.Model.models import df,rf_model,dt_model,features,y_test,X_test
+from src.Explanations import get_feature_explanation,simplified_terms,simplify_term
+from src.HtmlLayout.index import app
 
-try:
-    df = pd.read_csv('heloc_openml.csv')
-    df = df.replace('Special', np.nan)
-    for col in df.columns:
-        if col != 'RiskPerformance':
-            df[col] = pd.to_numeric(df[col], errors='coerce')
-    df['target'] = df['RiskPerformance'].map({'Good': 1, 'Bad': 0})
-except FileNotFoundError:
-    print("Datei konnte nicht geladen werden")    
 
-features = [col for col in df.columns if col != 'target' and col != 'RiskPerformance']
-X = df[features]
-y = df['target']
-
-X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.3, random_state=42)
-
-rf_model = RandomForestClassifier(n_estimators=1000, random_state=42)
-rf_model.fit(X_train, y_train)
-
-dt_model = DecisionTreeClassifier(max_depth=7, random_state=42)
-dt_model.fit(X_train, y_train)
-
-# Wörterbuch mit vereinfachten Begriffen für alle Spalten im Datensatz
-simplified_terms = {
-    # Allgemeine Risikobewertung
-    "ExternalRiskEstimate": "Kredit-Score",
-    "NumSatisfactoryTrades": "Pünktlich bezahlte Rechnungen",
-    "NetFractionRevolvingBurden": "Kreditkartenauslastung",
-    "NetFractionInstallBurden": "Ratenkreditauslastung",
-    "NumRevolvingTradesWithBalance": "Anzahl Kreditkarten mit Schulden",
-    "NumInstallTradesWithBalance": "Anzahl laufende Ratenkredite",
-    "NumBank2NatlTradesWHighUtilization": "Übernutzte Kreditkonten",
-    "PercentTradesNeverDelq": "Prozent nie verspäteter Zahlungen",
-    
-    # Zahlungshistorie
-    "MSinceMostRecentDelq": "Monate seit letzter Zahlungsverspätung",
-    "MaxDelq2PublicRecLast12M": "Maximale Zahlungsverspätung (letzte 12 Monate)",
-    "MaxDelqEver": "Längste Zahlungsverspätung jemals",
-    "AverageMInFile": "Durchschn. Monate in der Kreditakte",
-    "NumTotalTrades": "Gesamtzahl Kreditverträge",
-    "NumTradesOpeninLast12M": "Neue Kredite (letzte 12 Monate)",
-    "PercentInstallTrades": "Anteil Ratenkredite",
-    
-    # Suchverhalten
-    "MSinceMostRecentInqexcl7days": "Monate seit letzter Kreditanfrage",
-    "NumInqLast6M": "Kreditanfragen (letzte 6 Monate)",
-    "NumInqLast6Mexcl7days": "Kreditanfragen ohne letzte Woche",
-    
-    # Kreditbüro-Einträge
-    "MSinceMostRecentBankcard": "Monate seit letzter Kreditkarte",
-    "MSinceMostRecentTradeOpen": "Monate seit letzter Kreditaufnahme",
-    "NumTradesOpeninLast12M": "Neue Kredite (letzte 12 Monate)",
-    "NumBank2NatlTradesWHighUtilization": "Übernutzte Kreditkonten",
-    
-    # Zielwerte
-    "RiskPerformance": "Zahlungsverlässlichkeit",
-    "Good": "Zuverlässiger Kunde",
-    "Bad": "Zahlungsprobleme",
-    "target": "Zahlungsverlässlichkeit",
-    "1": "Zuverlässiger Kunde",
-    "0": "Zahlungsprobleme",
-    
-    # Kategorien
-    "Niedrig": "Schlecht",
-    "Mittel": "Mittel", 
-    "Hoch": "Gut",
-    "Schlechtes Risiko": "Zahlungsprobleme wahrscheinlich",
-    "Gutes Risiko": "Zuverlässiger Kunde",
-    
-    # Für Confusion Matrix
-    "Schlechte Kreditwürdigkeit": "Zahlungsprobleme",
-    "Gute Kreditwürdigkeit": "Zuverlässiger Kunde",
-
-    # Konto- & Kredithistorie
-    "MSinceOldestTradeOpen": "Monate seit ältestem Kredit",
-    "MSinceMostRecentTradeOpen": "Monate seit letzter Kreditaufnahme",
-
-    # Schwere Zahlungsverspätungen / Negativ­einträge
-    "NumTrades60Ever2DerogPubRec": "Anzahl 60-Tage-Zahlungsverzüge",
-    "NumTrades90Ever2DerogPubRec": "Anzahl 90-Tage-Zahlungsverzüge",
-
-    # Kontostände / Salden
-    "NumRevolvingTradesWBalance": "Anzahl Kreditkarten mit Schulden",
-    "NumInstallTradesWBalance":  "Anzahl laufende Ratenkredite",
-    "PercentTradesWBalance":     "Menga an Verträge mit Schulden",
-}
-
-# Funktion zum Umsetzen der vereinfachten Begriffe
-def simplify_term(term):
-    for key, value in simplified_terms.items():
-        if key in term:
-            return term.replace(key, value)
-    return term
-
-# Funktion für verständliche Erklärungen zu Features
-def get_feature_explanation(feature):
-    explanations = {
-        "ExternalRiskEstimate": "Je höher dieser Wert, desto besser Ihre allgemeine Kreditbewertung",
-        "NumSatisfactoryTrades": "Wie viele Kredite und Rechnungen Sie pünktlich bezahlt haben",
-        "NetFractionRevolvingBurden": "Wie stark Ihre Kreditkarten im Verhältnis zum Limit belastet sind",
-        "NetFractionInstallBurden": "Wie viel Ihrer Ratenkredite noch offen sind",
-        "NumRevolvingTradesWithBalance": "Anzahl Ihrer Kreditkarten mit offenem Saldo",
-        "NumInstallTradesWithBalance": "Anzahl Ihrer laufenden Ratenzahlungen",
-        "NumBank2NatlTradesWHighUtilization": "Anzahl Kreditkonten, die Sie fast bis zum Limit ausgereizt haben",
-        "PercentTradesNeverDelq": "Prozent Ihrer Kredite ohne jegliche Zahlungsverzögerungen",
-        "MSinceMostRecentDelq": "Wie viele Monate seit Ihrer letzten Zahlungsverspätung vergangen sind",
-        "MaxDelq2PublicRecLast12M": "Längste Zahlungsverspätung im letzten Jahr",
-        "MaxDelqEver": "Längste Zahlungsverspätung in Ihrer gesamten Kredithistorie",
-        "NumTotalTrades": "Gesamtzahl Ihrer Kreditverträge, Kreditkarten und Darlehen",
-        "NumTradesOpeninLast12M": "Wie viele neue Kredite Sie im letzten Jahr aufgenommen haben",
-        "MSinceMostRecentInqexcl7days": "Wie lange es her ist, dass jemand Ihre Kreditwürdigkeit überprüft hat",
-        "NumInqLast6M": "Wie oft Ihre Kreditwürdigkeit in den letzten 6 Monaten geprüft wurde",
-        "MSinceMostRecentBankcard": "Wie lange es her ist, dass Sie eine neue Kreditkarte bekommen haben"
-    }
-    return explanations.get(feature, "Ein Faktor für Ihre Kreditbewertung")
-
-app = dash.Dash(__name__, external_stylesheets=[dbc.themes.BOOTSTRAP])
-
-# Layout
-app.layout = dbc.Container([
-    dbc.Row([
-        dbc.Col([
-            html.H1("Kreditwürdigkeits-Explorer", className="text-center my-4"),
-            html.H3("Verständliche Einblicke in die Kreditentscheidung", className="text-center mb-4")
-        ])
-    ]),
-    
-    dbc.Row([
-        dbc.Col([
-            dbc.Card([
-                dbc.CardHeader("Einstellungen"),
-                dbc.CardBody([
-                    html.P("Wählen Sie einen Kredit-Score-Bereich (höher = besser):"),
-                    dcc.RangeSlider(
-                        id='risk-slider',
-                        min=df['ExternalRiskEstimate'].min(),
-                        max=df['ExternalRiskEstimate'].max(),
-                        value=[df['ExternalRiskEstimate'].min(), df['ExternalRiskEstimate'].max()],
-                        marks={int(i): str(i) for i in np.linspace(df['ExternalRiskEstimate'].min(), 
-                                                             df['ExternalRiskEstimate'].max(), 5)},
-                        step=1
-                    ),
-                    html.P("Mindestanzahl pünktlich bezahlter Rechnungen/Kredite:"),
-                    dcc.Slider(
-                        id='trades-slider',
-                        min=df['NumSatisfactoryTrades'].min(),
-                        max=df['NumSatisfactoryTrades'].max(),
-                        value=df['NumSatisfactoryTrades'].min(),
-                        marks={int(i): str(i) for i in np.linspace(df['NumSatisfactoryTrades'].min(), 
-                                                             df['NumSatisfactoryTrades'].max(), 5)},
-                        step=1
-                    ),
-                    html.P("Wählen Sie eine Darstellungsart:"),
-                    dcc.Dropdown(
-                        id='visualization-dropdown',
-                        options=[
-                            {'label': 'Entscheidungsbaum-Ansicht', 'value': 'tree'},
-                            {'label': 'Entscheidungspfad-Ansicht', 'value': 'sankey'},
-                            {'label': 'Genauigkeits-Ansicht', 'value': 'roc'}
-                        ],
-                        value='tree'
-                    ),
-                    html.Br(),
-                    dbc.Button("Analyse aktualisieren", id="update-button", color="primary", className="mt-2")
-                ])
-            ]),
-        ], width=3),
-        
-        dbc.Col([
-            dbc.Card([
-                dbc.CardHeader(html.H4("Visualisierung", id="viz-title")),
-                dbc.CardBody([
-                    dcc.Loading(
-                        id="loading-1",
-                        type="circle",
-                        children=html.Div(id='visualization-content')
-                    ),
-                ])
-            ]),
-        ], width=9)
-    ]),
-    
-    dbc.Row([
-        dbc.Col([
-            html.Hr(),
-            html.Div(id='model-metrics', className="mt-4")
-        ])
-    ])
-], fluid=True)
-
-# Callback zum Aktualisieren der Visualisierung
 @app.callback(
     [Output('visualization-content', 'children'),
      Output('viz-title', 'children'),
@@ -212,8 +22,9 @@ app.layout = dbc.Container([
     [Input('update-button', 'n_clicks')],
     [State('risk-slider', 'value'),
      State('trades-slider', 'value'),
-     State('visualization-dropdown', 'value')]
+     State('visualization-dropdown', 'value')],
 )
+# Callback zum Aktualisieren der Visualisierung
 def update_visualization(n_clicks, risk_range, min_trades, selected_viz):
     # Daten filtern
     filtered_df = df[(df['ExternalRiskEstimate'] >= risk_range[0]) & 
@@ -561,6 +372,3 @@ def update_visualization(n_clicks, risk_range, min_trades, selected_viz):
             report_table,
             metrics_explanation
         ]), title, metrics_div
-
-if __name__ == '__main__':
-    app.run(debug=True)
