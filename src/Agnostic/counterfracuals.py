@@ -2,7 +2,9 @@ import numpy as np
 import pandas as pd
 from itertools import combinations
 from sklearn.preprocessing import MinMaxScaler
-
+from sklearn.preprocessing import MinMaxScaler
+import pandas as pd 
+from src.Model.models import dt_model, X_train,X_test,y_test
 
 def find_counterfactual(x_orig, model, X_data,
                         features_to_vary,
@@ -68,57 +70,35 @@ def find_counterfactual(x_orig, model, X_data,
     return None
 
 
-import pandas as pd
-import numpy as np
-from sklearn.tree import DecisionTreeClassifier
-from sklearn.model_selection import train_test_split
-from sklearn.preprocessing import MinMaxScaler
 
-# Funktion von vorher hier einfügen oder importieren (siehe vorheriger Post)
-# ➤ find_counterfactual(...)
 
-# Schritt 1: Künstlichen Kredit-Datensatz erstellen
-np.random.seed(42)
-n = 300
+def counterfracuals_tree():
+    # Skalierung vorbereiten (wird für Counterfactual benötigt)
+    scaler = MinMaxScaler()
+    scaler.fit(X_train)
 
-df = pd.DataFrame({
-    "income": np.random.normal(50000, 15000, n),       # Jahreseinkommen
-    "age": np.random.normal(35, 10, n),                # Alter
-    "loan_amount": np.random.normal(15000, 5000, n),   # gewünschte Kredithöhe
-    "credit_score": np.random.normal(650, 70, n),      # Kredit-Score
-})
+    # Wähle ein Testbeispiel mit negativem Outcome (Bad = 0)
+    x_example = X_test[y_test == 0].iloc[0]
 
-# Zielvariable generieren: "approved" = 1, wenn Bedingungen erfüllt
-df["approved"] = (
-    (df["income"] > 40000) &
-    (df["credit_score"] > 600) &
-    (df["loan_amount"] < 20000)
-).astype(int)
+    # Liste der veränderbaren Features – du kannst sie anpassen
+    veränderbare_features = [
+        'ExternalRiskEstimate', 'MSinceOldestTradeOpen', 'NumBank2TradeLines', 
+        'AverageMInFile', 'NumSatisfactoryTrades', 'PercentTradesNeverDelq'
+    ]
 
-# Schritt 2: Modell trainieren
-X = df.drop("approved", axis=1)
-y = df["approved"]
+    # Counterfactual berechnen
+    cf = find_counterfactual(
+        x_orig=x_example,
+        model=dt_model,            # oder rf_model
+        X_data=X_train,
+        features_to_vary=veränderbare_features,
+        max_features_changed=2,
+        steps=15,
+        scaler=scaler
+    )
 
-X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=1)
-model = DecisionTreeClassifier(max_depth=4)
-model.fit(X_train, y_train)
+    # Vergleich anzeigen
+    if cf is not None:
+        print("\n🔍 Vergleich Original vs. Counterfactual:")
+        print(pd.DataFrame([x_example, cf], index=["Original", "Counterfactual"]).T)
 
-# Schritt 3: Beispiel einer abgelehnten Instanz
-x_example = X_test[y_test == 0].iloc[0]
-print("\n📌 Ursprüngliche Vorhersage:", model.predict([x_example])[0])
-print(x_example)
-
-# Schritt 4: Counterfactual finden
-cf = find_counterfactual(
-    x_orig=x_example,
-    model=model,
-    X_data=X_train,
-    features_to_vary=['income', 'loan_amount', 'credit_score'],
-    max_features_changed=2,
-    steps=20
-)
-
-# Schritt 5: Vergleich ausgeben
-if cf is not None:
-    print("\n🔍 Vergleich:")
-    print(pd.DataFrame([x_example, cf], index=["Original", "Counterfactual"]).T)
