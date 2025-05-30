@@ -10,10 +10,20 @@ from sklearn.model_selection import train_test_split
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.tree import DecisionTreeClassifier, export_graphviz
 from sklearn.metrics import confusion_matrix, classification_report, roc_curve, auc
-from src.Model.models import df,rf_model,dt_model,features,y_test,X_test
+from src.Model.models import X_train, df,rf_model,dt_model,features,y_test,X_test
 from src.Explanations import get_feature_explanation,simplified_terms,simplify_term
 from src.HtmlLayout.index import app
-
+from src.Agnostic.surrogate_Models import build_surrogate_and_figure
+import pandas as pd
+import numpy as np
+from sklearn.model_selection import train_test_split
+from sklearn.preprocessing import StandardScaler, LabelEncoder
+from sklearn.neural_network import MLPRegressor
+from sklearn.linear_model import LinearRegression
+from sklearn.tree import DecisionTreeRegressor, export_text
+import plotly.graph_objects as go
+from dash import html, dcc
+from sklearn.impute import SimpleImputer
 
 @app.callback(
     [Output('visualization-content', 'children'),
@@ -372,3 +382,58 @@ def update_visualization(n_clicks, risk_range, min_trades, selected_viz):
             report_table,
             metrics_explanation
         ]), title, metrics_div
+    elif selected_viz== "surrogate":
+        title = "Surrogatmodell erklärt neuronales Netz (MLP)"
+
+
+                # Kategorisch nach numerisch
+        y = LabelEncoder().fit_transform(df["RiskPerformance"])
+        X = df.drop(columns=["RiskPerformance"])
+
+        # Fehlende Werte im X imputieren (Mean für numerische Features)
+        imputer = SimpleImputer(strategy="mean")
+        X_imputed = imputer.fit_transform(X)
+        X_imputed_df = pd.DataFrame(X_imputed, columns=X.columns)
+
+        # Train/Test Split
+        X_train, _, y_train, _ = train_test_split(X_imputed_df, y, test_size=0.2, random_state=42)
+
+        # Skalieren
+        scaler = StandardScaler()
+        X_train_scaled = scaler.fit_transform(X_train)
+
+        # Blackbox-Modell: MLP
+        mlp = MLPRegressor(hidden_layer_sizes=(30, 20), max_iter=1000, random_state=1)
+        mlp.fit(X_train_scaled, y_train)
+        blackbox_preds = mlp.predict(X_train_scaled)
+
+        # Surrogat-Modell (z. B. linear oder baum)
+        surrogate_type = "linear"  # oder "linear"
+        goodness, surrogate_fig = build_surrogate_and_figure(
+            X_train_scaled[:, :1],  # 1 Feature für Visualisierung
+            blackbox_preds,
+            feature_names=[X_train.columns[0]],
+            model=surrogate_type
+        )
+
+        # Erklärungstext
+        goodness_text = html.P(f"""
+            Das Surrogatmodell ({surrogate_type}) erklärt etwa {goodness*100:.1f}% der Vorhersagevariabilität 
+            des neuronalen Netzes – also wie stark es nachvollziehen kann, wie das komplexe Modell entscheidet.
+        """)
+
+        explanation = html.Div([
+            html.H5("Was zeigt dieses Diagramm?"),
+            html.P("Das neuronale Netz ist sehr mächtig, aber schwer zu verstehen. Ein einfaches Modell versucht hier, seine Logik zu erklären."),
+            html.P([
+                html.Strong("Lineares Modell"), ": erkennt einfache, lineare Zusammenhänge.",
+                html.Br(),
+                html.Strong("Entscheidungsbaum"), ": nutzt Regeln zur Erklärung, z. B. Schwellenwerte."
+            ])
+        ])
+
+        return html.Div([
+            dcc.Graph(figure=surrogate_fig),
+            goodness_text,
+            explanation
+        ]), title, None
