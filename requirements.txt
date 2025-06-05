@@ -1,2 +1,11 @@
 dash_bootstrap_components
 pydotplus
+torch
+pandas 
+numpy
+dash 
+plotly
+matplotlib
+IPython
+scikit-learn
+graphviz
