@@ -55,7 +55,18 @@ app.layout = dbc.Container([
                         value='tree'
                     ),
                     html.Br(),
-                    dbc.Button("Analyse aktualisieren", id="update-button", color="primary", className="mt-2")
+                    dbc.Button("Analyse aktualisieren", id="update-button", color="primary", className="mt-2"),
+
+                    dcc.Dropdown(
+                        id='model-dropdown',
+                        options=[
+                            {'label': 'Random Forest',      'value': 'rf'},
+                            {'label': 'Gradient Boosting',  'value': 'gb'}
+                        ],
+                        value='rf',            # Default
+                        clearable=False
+                    ),
+
                 ])
             ]),
         ], width=3),
@@ -81,3 +92,8 @@ app.layout = dbc.Container([
         ])
     ])
 ], fluid=True)
+
+html.Div(
+    dcc.Dropdown(id="model-dropdown"),
+    style={"display": "none"}
+),

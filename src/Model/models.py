@@ -4,7 +4,7 @@ import plotly.express as px
 import plotly.graph_objects as go
 import dash_bootstrap_components as dbc
 from sklearn.model_selection import train_test_split
-from sklearn.ensemble import RandomForestClassifier
+from sklearn.ensemble import RandomForestClassifier, HistGradientBoostingClassifier
 from sklearn.tree import DecisionTreeClassifier, export_graphviz
 from sklearn.metrics import confusion_matrix, classification_report, roc_curve, auc
 
@@ -12,7 +12,6 @@ from sklearn.metrics import confusion_matrix, classification_report, roc_curve, 
 FILE_PATH='Datensaetze/heloc_openml.csv'
 
 def Datenerstellung():
-
     try:
             df = pd.read_csv(FILE_PATH)
             df = df.replace('Special', np.nan)
@@ -20,33 +19,60 @@ def Datenerstellung():
                 if col != 'RiskPerformance':
                     df[col] = pd.to_numeric(df[col], errors='coerce')
             df['target'] = df['RiskPerformance'].map({'Good': 1, 'Bad': 0})
-            return df
-            
+            return df    
     except FileNotFoundError:
             print("Datei konnte nicht geladen werden") 
             return None
 
-
-
-
-#Pandas DATA HANDLING
 df=Datenerstellung()
 features = [col for col in df.columns if col != 'target' and col != 'RiskPerformance']
 
-# Modelle
-dt_model = DecisionTreeClassifier(max_depth=7, random_state=42)
-rf_model = RandomForestClassifier(n_estimators=530, class_weight="balanced", max_depth=30, max_features=0.38, min_samples_leaf=4, min_samples_split=7, random_state=42)
+# -----------------------------------------
+# -------------- Modelle ------------------
+# -----------------------------------------
 
+# ---- Trainingssplit ----
 X = df[features]
 y = df['target']
-
 X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.3, random_state=42)
 
-    
-rf_model.fit(X_train, y_train)    
+# ---- Random Forest ----
+rf_model = RandomForestClassifier(n_estimators=530, class_weight="balanced", max_depth=30, max_features=0.38, min_samples_leaf=4, min_samples_split=7, random_state=42)
+rf_model.fit(X_train, y_train)
+
+# ---- Decision Tree ----
+dt_model = DecisionTreeClassifier(max_depth=7, random_state=42)
 dt_model.fit(X_train, y_train)
 
-# ---- für LIME ----
+# ---- Gradient Boosting ----
+gb_model = HistGradientBoostingClassifier(max_iter=300, learning_rate=0.05, max_depth=3, random_state=42)
+gb_model.fit(X_train, y_train)
+
+# ─── Modell-Mapping ────
+model_dict = {
+    "rf": rf_model,
+    "gb": gb_model
+}
+
+# -----------------------------------------
+# -------- Erklärbarkeits Modelle ---------
+# -----------------------------------------
+
+# ---- Surrogate-Tree ----
+def train_surrogate(base_model, X, max_depth=3):
+    y_hat = base_model.predict(X)
+    tree  = DecisionTreeClassifier(max_depth=max_depth,
+                                   random_state=42).fit(X, y_hat)
+    fidelity = (tree.predict(X) == y_hat).mean()
+    return tree, fidelity
+
+sur_tree_rf, fid_rf = train_surrogate(rf_model,  X_train, max_depth=3)
+sur_tree_gb, fid_gb = train_surrogate(gb_model,  X_train, max_depth=3)
+
+surrogate_dict = {"rf": sur_tree_rf, "gb": sur_tree_gb}
+surrogate_fidelity = {"rf": fid_rf, "gb": fid_gb}
+
+# ---- LIME ----
 from sklearn.impute import SimpleImputer
 from lime.lime_tabular import LimeTabularExplainer
 
