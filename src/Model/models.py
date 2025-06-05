@@ -58,19 +58,21 @@ model_dict = {
 # -------- Erklärbarkeits Modelle ---------
 # -----------------------------------------
 
-# ---- Surrogate-Tree ----
+# ---- Surrogate ----
 def train_surrogate(base_model, X, max_depth=3):
-    y_hat = base_model.predict(X)
-    tree  = DecisionTreeClassifier(max_depth=max_depth,
-                                   random_state=42).fit(X, y_hat)
+    y_hat    = base_model.predict(X)           # harte Labels
+    tree     = DecisionTreeClassifier(max_depth=max_depth,
+                                      random_state=42).fit(X, y_hat)
     fidelity = (tree.predict(X) == y_hat).mean()
     return tree, fidelity
 
-sur_tree_rf, fid_rf = train_surrogate(rf_model,  X_train, max_depth=3)
-sur_tree_gb, fid_gb = train_surrogate(gb_model,  X_train, max_depth=3)
+surrogate_dict      = {}
+surrogate_fidelity  = {}
 
-surrogate_dict = {"rf": sur_tree_rf, "gb": sur_tree_gb}
-surrogate_fidelity = {"rf": fid_rf, "gb": fid_gb}
+for key, mdl in model_dict.items():
+    sur_tree, fid              = train_surrogate(mdl, X_train, max_depth=3)
+    surrogate_dict[key]        = sur_tree
+    surrogate_fidelity[key]    = fid
 
 # ---- LIME ----
 from sklearn.impute import SimpleImputer
