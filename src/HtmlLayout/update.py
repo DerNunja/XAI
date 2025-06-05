@@ -1,40 +1,47 @@
 import numpy as np
-import plotly.express as px
-import plotly.graph_objects as go
-from dash import dcc, html, Input, Output, State, callback
-import dash_bootstrap_components as dbc
 import base64
 import pydotplus
-from IPython.display import Image
-from sklearn.model_selection import train_test_split
-from sklearn.ensemble import RandomForestClassifier
-from sklearn.tree import DecisionTreeClassifier, export_graphviz
-from sklearn.metrics import confusion_matrix, classification_report, roc_curve, auc
-from src.Model.models import df,rf_model,dt_model,features,y_test,X_test
-from src.Explanations import get_feature_explanation,simplified_terms,simplify_term
-from src.HtmlLayout.index import app
+import plotly.graph_objects as go
+import plotly.express as px                      # ← neu
+import dash_bootstrap_components as dbc
+from dash import dcc, html
+from dash.dependencies import Input, Output, State, ALL
 
+from sklearn.tree import export_graphviz
+from sklearn.metrics import roc_curve, auc, confusion_matrix, classification_report
+
+from src.Model.models import (
+    df, rf_model, dt_model, features, y_test, X_test,
+    imputer, explainer, median_dict, model_dict, surrogate_dict, surrogate_fidelity
+)
+from src.Explanations import simplified_terms, get_feature_explanation
+from src.HtmlLayout.index import app
 
 @app.callback(
     [Output('visualization-content', 'children'),
      Output('viz-title', 'children'),
      Output('model-metrics', 'children')],
-    [Input('update-button', 'n_clicks')],
-    [State('risk-slider', 'value'),
-     State('trades-slider', 'value'),
-     State('visualization-dropdown', 'value')],
+    Input('update-button', 'n_clicks'),
+    State('risk-slider', 'value'),
+    State('trades-slider', 'value'),
+    State('visualization-dropdown', 'value'),
+    Input('model-dropdown', 'value'),
 )
+
 # Callback zum Aktualisieren der Visualisierung
-def update_visualization(n_clicks, risk_range, min_trades, selected_viz):
+def update_visualization(n_clicks, risk_range, min_trades, selected_viz, selected_model):
+
+    model = model_dict[selected_model]
+
     # Daten filtern
     filtered_df = df[(df['ExternalRiskEstimate'] >= risk_range[0]) & 
                      (df['ExternalRiskEstimate'] <= risk_range[1]) &
                      (df['NumSatisfactoryTrades'] >= min_trades)]
-    
+
     if len(filtered_df) > 0:
         X_filtered = filtered_df[features]
         y_filtered = filtered_df['target']
-        y_pred = rf_model.predict(X_filtered)
+        y_pred = model.predict(X_filtered)
         accuracy = np.mean(y_pred == y_filtered)
         metrics_div = html.Div([
             html.H4("Auswertung"),
@@ -58,28 +65,68 @@ def update_visualization(n_clicks, risk_range, min_trades, selected_viz):
         if len(filtered_df) < 10: 
             return html.P("Nicht genügend Daten für die Ansicht nach Filterung."), title, metrics_div
 
+        tree_model   = surrogate_dict[selected_model]
+        fidelity_val = surrogate_fidelity[selected_model]
+
         simplified_feature_names = [simplified_terms.get(feat, feat) for feat in features]
         
         dot_data = export_graphviz(
-            dt_model,
+            tree_model,
             out_file=None,
             feature_names=simplified_feature_names,
             class_names=['Zahlungsprobleme', 'Zuverlässiger Zahler'],
-            filled=True,
-            rounded=True,
-            special_characters=True,
-            max_depth=3
+            filled=True, rounded=True, special_characters=True,
+            max_depth=tree_model.get_depth()
+        
         )
         graph = pydotplus.graph_from_dot_data(dot_data)
         img_data = graph.create_png()
         encoded_img = base64.b64encode(img_data).decode('utf-8')
         
         return html.Div([
-            html.Img(src=f'data:image/png;base64,{encoded_img}', style={'width': '100%'}),
-            html.H5("So lesen Sie den Entscheidungsbaum:", className="mt-4"),
-            html.P("Der Baum zeigt, welche Faktoren am wichtigsten für die Kreditentscheidung sind."),
-            html.P("Jeder Verzweigungspunkt ist eine Frage (z.B. 'Ist Ihr Kredit-Score über 72?'). Folgen Sie den Zweigen zur Vorhersage: 'Zuverlässiger Zahler' oder 'Zahlungsprobleme'.")
-        ]), title, metrics_div
+            html.Img(src=f'data:image/png;base64,{encoded_img}',
+                    style={'width':'100%'}),
+            html.H5("So liest du das Surrogat:", className="mt-4"),
+            html.P(
+                f"Dieser kompakte Baum bildet die Entscheidungen des "
+                f"ausgewählten Modells ({selected_model.upper()}) mit "
+                f"{fidelity_val:.1%} Übereinstimmung nach."
+        ),
+        html.P("Jeder Knoten ist eine Ja/Nein-Frage usw …")
+    ]), title, metrics_div
+    
+    elif selected_viz == "lime":
+        title = "LIME - Local Interpretable Model Explanation"
+
+        input_fields = [
+            html.Div([
+                html.Label(simple_feature_names[f]),
+                dcc.Input(
+                    id={"type": "feat-input", "feature": f},
+                    type="number",
+                    placeholder=str(round(median_dict[f], 2)),
+                    debounce=True
+                )
+            ], style={"marginBottom": "8px"})
+            for f in features
+        ]
+    
+        return (
+            html.Div([
+                html.H5("Gib deine Wunschwerte ein (leer = Median):"),
+                html.Div(input_fields, style={"columnCount": 3}),
+                dbc.Button("Vorhersage & Erklärung",
+                        id="lime-predict-btn",
+                        n_clicks=0,
+                        color="primary",
+                        className="mt-3"),
+                html.Hr(),
+                html.Div(id="lime-pred-output"),
+                dcc.Graph(id="lime-graph")
+            ]),
+            title,
+            metrics_div
+        )
     
     elif selected_viz == 'sankey':
         title = "Entscheidungspfad-Ansicht"
@@ -265,16 +312,19 @@ def update_visualization(n_clicks, risk_range, min_trades, selected_viz):
         if len(filtered_df) < 10:
             return html.P("Nicht genügend Daten für die Ansicht nach Filterung."), title, metrics_div
         
+        model      = model_dict[selected_model]          # "rf" oder "gb"
+        model_name = "Random Forest" if selected_model == "rf" else "Gradient Boosting"
+
         # ROC-Kurve berechnen
-        y_scores = rf_model.predict_proba(X_test)[:, 1]
-        fpr, tpr, thresholds = roc_curve(y_test, y_scores)
+        y_scores = model.predict_proba(X_test)[:, 1]
+        fpr, tpr, _ = roc_curve(y_test, y_scores)
         roc_auc = auc(fpr, tpr)
         
         fig = go.Figure()
         fig.add_trace(go.Scatter(
             x=fpr, y=tpr,
             mode='lines',
-            name=f'Vorhersage-Qualität (AUC = {roc_auc:.3f})',
+            name=f'{model_name} (AUC = {roc_auc:.3f})',
             line=dict(color='royalblue', width=2)
         ))
         
@@ -287,7 +337,7 @@ def update_visualization(n_clicks, risk_range, min_trades, selected_viz):
         ))
         
         fig.update_layout(
-            title='Wie gut das System Zahlungsverhalten vorhersagen kann',
+            title=f"ROC-Kurve - {model_name}",
             xaxis_title='Anteil fälschlich abgelehnter guter Kunden',
             yaxis_title='Anteil richtig erkannter zuverlässiger Kunden',
             height=600,
@@ -297,6 +347,7 @@ def update_visualization(n_clicks, risk_range, min_trades, selected_viz):
         # Confusion Matrix
         y_pred_binary = (y_scores > 0.5).astype(int)
         cm = confusion_matrix(y_test, y_pred_binary)
+        report  = classification_report(y_test, y_pred_binary, output_dict=True)
         
         # Confusion Matrix als Heatmap mit verständlicheren Beschriftungen
         fig2 = px.imshow(
@@ -371,4 +422,60 @@ def update_visualization(n_clicks, risk_range, min_trades, selected_viz):
             dcc.Graph(figure=fig2),
             report_table,
             metrics_explanation
-        ]), title, metrics_div
+        ]), title, metrics_div    
+
+
+@app.callback(
+    [Output("lime-pred-output", "children"),
+     Output("lime-graph", "figure")],
+    Input("lime-predict-btn", "n_clicks"),
+    State({"type": "feat-input", "feature": ALL}, "id"),
+    State({"type": "feat-input", "feature": ALL}, "value"),
+    Input('model-dropdown', 'value'), 
+    prevent_initial_call=True
+)
+
+def predict_and_explain(n_clicks, id_list, value_list, selected_model):
+    model  = model_dict[selected_model]
+    # --- 1 · Werte in richtige Reihenfolge bringen -------------------
+    user_vals = {item["feature"]: val for item, val in zip(id_list, value_list)}
+    instance = [
+        median_dict[f] if user_vals.get(f) is None else user_vals[f]
+        for f in features
+    ]
+
+    # --- 2 · gleiche Vorverarbeitung wie im Training -----------------
+    instance_arr = imputer.transform([instance])
+
+    # --- 3 · Vorhersage ---------------------------------------------
+    proba  = model.predict_proba(instance_arr)[0]   # [P(Bad), P(Good)]
+    pred_class = ("Zuverlässiger Zahler"
+                  if proba[1] >= 0.5 else "Zahlungsprobleme")
+
+    # --- 4 · LIME-Erklärung -----------------------------------------
+    explanation = explainer.explain_instance(
+        instance_arr[0],
+        model.predict_proba,
+        labels=[1],           # 1 = Good
+        num_features=10
+    )
+    desc, weight = zip(*[(d, w) for d, w in explanation.as_list(label=1)])
+
+    # --- 5 · Plot ----------------------------------------------------
+    fig = go.Figure(go.Bar(
+        x=weight, y=desc, orientation="h",
+        text=[f"{w:+.2f}" for w in weight],
+        hovertemplate="%{y}<br>Gewicht: %{x:+.2f}<extra></extra>"
+    ))
+    fig.update_layout(
+        xaxis_title="Einfluss auf Klasse »Zuverlässiger Zahler«",
+        yaxis_title="Feature (Bedingung)",
+        yaxis=dict(autorange="reversed"),
+        margin=dict(l=20, r=20, t=20, b=20)
+    )
+
+    # --- 6 · Textausgabe -------------------------------------------
+    pred_text = (f"**Vorhersage:** {pred_class}  "
+                 f"(P(Zuverlässig) = {proba[1]:.1%})")
+
+    return dcc.Markdown(pred_text), fig

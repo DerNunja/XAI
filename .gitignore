@@ -5,6 +5,8 @@ __pycache__/
 
 # C extensions
 *.so
+*.gz
+*.tar
 
 # Distribution / packaging
 .Python
@@ -156,7 +158,6 @@ dmypy.json
 
 # pytype static type analyzer
 .pytype/
-Datensaetze/
 
 # Cython debug symbols
 cython_debug/
@@ -173,10 +174,3 @@ cython_debug/
 
 # PyPI configuration file
 .pypirc
-
-# Cursor
-#  Cursor is an AI-powered code editor. `.cursorignore` specifies files/directories to
-#  exclude from AI features like autocomplete and code analysis. Recommended for sensitive data
-#  refer to https://docs.cursor.com/context/ignore-files
-.cursorignore
-.cursorindexingignore

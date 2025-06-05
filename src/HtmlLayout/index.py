@@ -7,7 +7,7 @@ import dash_bootstrap_components as dbc
 from IPython.display import Image
 from src.Model.models import dt_model,rf_model,df
 
-app = dash.Dash(__name__, external_stylesheets=[dbc.themes.BOOTSTRAP])
+app = dash.Dash(__name__, external_stylesheets=[dbc.themes.BOOTSTRAP], suppress_callback_exceptions=True)
 
 # Layout
 app.layout = dbc.Container([
@@ -49,12 +49,24 @@ app.layout = dbc.Container([
                         options=[
                             {'label': 'Entscheidungsbaum-Ansicht', 'value': 'tree'},
                             {'label': 'Entscheidungspfad-Ansicht', 'value': 'sankey'},
+                            {'label': 'LIME', 'value': 'lime'},
                             {'label': 'Genauigkeits-Ansicht', 'value': 'roc'}
                         ],
                         value='tree'
                     ),
                     html.Br(),
-                    dbc.Button("Analyse aktualisieren", id="update-button", color="primary", className="mt-2")
+                    dbc.Button("Analyse aktualisieren", id="update-button", color="primary", className="mt-2"),
+
+                    dcc.Dropdown(
+                        id='model-dropdown',
+                        options=[
+                            {'label': 'Random Forest',      'value': 'rf'},
+                            {'label': 'Gradient Boosting',  'value': 'gb'}
+                        ],
+                        value='rf',            # Default
+                        clearable=False
+                    ),
+
                 ])
             ]),
         ], width=3),
@@ -80,3 +92,8 @@ app.layout = dbc.Container([
         ])
     ])
 ], fluid=True)
+
+html.Div(
+    dcc.Dropdown(id="model-dropdown"),
+    style={"display": "none"}
+),
