@@ -50,7 +50,8 @@ app.layout = dbc.Container([
                             {'label': 'Entscheidungsbaum-Ansicht', 'value': 'tree'},
                             {'label': 'Entscheidungspfad-Ansicht', 'value': 'sankey'},
                             {'label': 'LIME', 'value': 'lime'},
-                            {'label': 'Genauigkeits-Ansicht', 'value': 'roc'}
+                            {'label': 'Genauigkeits-Ansicht', 'value': 'roc'},
+                            {"label":"Surrogate Modell","value":"surrogate"},
                         ],
                         value='tree'
                     ),
