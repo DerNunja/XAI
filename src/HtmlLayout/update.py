@@ -4,17 +4,15 @@ import pydotplus
 import plotly.graph_objects as go
 import plotly.express as px                      # ← neu
 import dash_bootstrap_components as dbc
-from dash import dcc, html
-from dash.dependencies import Input, Output, State, ALL
-
-from sklearn.tree import export_graphviz
-from sklearn.metrics import roc_curve, auc, confusion_matrix, classification_report
-
-from src.Model.models import (
-    df, rf_model, dt_model, features, y_test, X_test,
-    imputer, explainer, median_dict, model_dict, surrogate_dict, surrogate_fidelity
-)
-from src.Explanations import simplified_terms, get_feature_explanation
+import base64
+import pydotplus
+from IPython.display import Image
+from sklearn.model_selection import train_test_split
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.tree import DecisionTreeClassifier, export_graphviz
+from sklearn.metrics import confusion_matrix, classification_report, roc_curve, auc
+from src.Model.models import df,rf_model,dt_model,features,y_test,X_test
+from src.Explanations import get_feature_explanation,simplified_terms,simplify_term
 from src.HtmlLayout.index import app
 
 @app.callback(
@@ -422,60 +420,4 @@ def update_visualization(n_clicks, risk_range, min_trades, selected_viz, selecte
             dcc.Graph(figure=fig2),
             report_table,
             metrics_explanation
-        ]), title, metrics_div    
-
-
-@app.callback(
-    [Output("lime-pred-output", "children"),
-     Output("lime-graph", "figure")],
-    Input("lime-predict-btn", "n_clicks"),
-    State({"type": "feat-input", "feature": ALL}, "id"),
-    State({"type": "feat-input", "feature": ALL}, "value"),
-    Input('model-dropdown', 'value'), 
-    prevent_initial_call=True
-)
-
-def predict_and_explain(n_clicks, id_list, value_list, selected_model):
-    model  = model_dict[selected_model]
-    # --- 1 · Werte in richtige Reihenfolge bringen -------------------
-    user_vals = {item["feature"]: val for item, val in zip(id_list, value_list)}
-    instance = [
-        median_dict[f] if user_vals.get(f) is None else user_vals[f]
-        for f in features
-    ]
-
-    # --- 2 · gleiche Vorverarbeitung wie im Training -----------------
-    instance_arr = imputer.transform([instance])
-
-    # --- 3 · Vorhersage ---------------------------------------------
-    proba  = model.predict_proba(instance_arr)[0]   # [P(Bad), P(Good)]
-    pred_class = ("Zuverlässiger Zahler"
-                  if proba[1] >= 0.5 else "Zahlungsprobleme")
-
-    # --- 4 · LIME-Erklärung -----------------------------------------
-    explanation = explainer.explain_instance(
-        instance_arr[0],
-        model.predict_proba,
-        labels=[1],           # 1 = Good
-        num_features=10
-    )
-    desc, weight = zip(*[(d, w) for d, w in explanation.as_list(label=1)])
-
-    # --- 5 · Plot ----------------------------------------------------
-    fig = go.Figure(go.Bar(
-        x=weight, y=desc, orientation="h",
-        text=[f"{w:+.2f}" for w in weight],
-        hovertemplate="%{y}<br>Gewicht: %{x:+.2f}<extra></extra>"
-    ))
-    fig.update_layout(
-        xaxis_title="Einfluss auf Klasse »Zuverlässiger Zahler«",
-        yaxis_title="Feature (Bedingung)",
-        yaxis=dict(autorange="reversed"),
-        margin=dict(l=20, r=20, t=20, b=20)
-    )
-
-    # --- 6 · Textausgabe -------------------------------------------
-    pred_text = (f"**Vorhersage:** {pred_class}  "
-                 f"(P(Zuverlässig) = {proba[1]:.1%})")
-
-    return dcc.Markdown(pred_text), fig
+        ]), title, metrics_div

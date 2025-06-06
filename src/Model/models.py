@@ -36,12 +36,11 @@ X = df[features]
 y = df['target']
 X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.3, random_state=42)
 
-# ---- Random Forest ----
-rf_model = RandomForestClassifier(n_estimators=530, class_weight="balanced", max_depth=30, max_features=0.38, min_samples_leaf=4, min_samples_split=7, random_state=42)
+    
+rf_model = RandomForestClassifier(n_estimators=530, class_weight="balanced", max_depth=30, max_features=0.38, min_samples_leaf=4, min_samples_split=7, random_state=42)    
 rf_model.fit(X_train, y_train)
 
-# ---- Decision Tree ----
-dt_model = DecisionTreeClassifier(max_depth=7, random_state=42)
+dt_model = DecisionTreeClassifier(max_depth=7, random_state=42)    
 dt_model.fit(X_train, y_train)
 
 # ---- Gradient Boosting ----
