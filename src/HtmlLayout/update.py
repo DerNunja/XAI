@@ -4,15 +4,28 @@ import pydotplus
 import plotly.graph_objects as go
 import plotly.express as px                      # ← neu
 import dash_bootstrap_components as dbc
-import base64
-import pydotplus
-from IPython.display import Image
+from dash import dcc, html
+from dash.dependencies import Input, Output, State, ALL
+
+from sklearn.tree import export_graphviz
+from sklearn.metrics import roc_curve, auc, confusion_matrix, classification_report
+from src.Agnostic.surrogate_Models import build_surrogate_and_figure
+import pandas as pd
+import numpy as np
 from sklearn.model_selection import train_test_split
-from sklearn.ensemble import RandomForestClassifier
-from sklearn.tree import DecisionTreeClassifier, export_graphviz
-from sklearn.metrics import confusion_matrix, classification_report, roc_curve, auc
-from src.Model.models import df,rf_model,dt_model,features,y_test,X_test
-from src.Explanations import get_feature_explanation,simplified_terms,simplify_term
+from sklearn.preprocessing import StandardScaler, LabelEncoder
+from sklearn.neural_network import MLPRegressor
+from sklearn.linear_model import LinearRegression
+from sklearn.tree import DecisionTreeRegressor, export_text
+import plotly.graph_objects as go
+from dash import html, dcc
+from sklearn.impute import SimpleImputer
+
+from src.Model.models import (
+    df, rf_model, dt_model, features, y_test, X_test,
+    imputer, explainer, median_dict, model_dict, surrogate_dict, surrogate_fidelity
+)
+from src.Explanations import simplified_terms, get_feature_explanation
 from src.HtmlLayout.index import app
 
 @app.callback(
@@ -94,8 +107,9 @@ def update_visualization(n_clicks, risk_range, min_trades, selected_viz, selecte
     ]), title, metrics_div
     
     elif selected_viz == "lime":
-        title = "LIME - Local Interpretable Model Explanation"
+        title = "LIME – Local Interpretable Model Explanation"
 
+        # ── Eingabefelder dynamisch erzeugen ────────────────────────────
         input_fields = [
             html.Div([
                 html.Label(simple_feature_names[f]),
@@ -108,16 +122,65 @@ def update_visualization(n_clicks, risk_range, min_trades, selected_viz, selecte
             ], style={"marginBottom": "8px"})
             for f in features
         ]
-    
+
+        # ── Erklärungstext (NEU) ────────────────────────────────────────
+        explanation_box = html.Div([
+            html.H5("Was kann ich hier tun?"),
+            html.P([
+                "Auf dieser Seite kannst du einen ",
+                html.B("eigenen Kreditantrag simulieren"),
+                ". Gib dafür in den Feldern unten deine Wunsch-Werte ein ",
+                "(oder lass sie leer – dann wird der ",
+                html.I("typische Medianwert"),
+                " eingesetzt)."
+            ]),
+            html.P([
+                "Klick anschließend auf ",
+                html.Code("Vorhersage & Erklärung"),
+                ". Unser Modell berechnet dann, ",
+                html.B("ob du voraussichtlich pünktlich zahlst"),
+                " oder eher in Zahlungsverzug gerätst – ",
+                "und zeigt dir sofort eine Erklärung mit LIME."
+            ]),
+            html.H5("Wie lese ich die LIME-Grafik?"),
+            html.Ul([
+                html.Li([
+                    html.B("Balken nach rechts (positiv)"),
+                    ": erhöhen die Chance, als ",
+                    html.Span("„Zuverlässiger Zahler“", style={"color":"green"}),
+                    " eingestuft zu werden."
+                ]),
+                html.Li([
+                    html.B("Balken nach links (negativ)"),
+                    ": senken diese Chance und schieben dich eher in Richtung ",
+                    html.Span("„Zahlungsprobleme“", style={"color":"crimson"}),
+                    "."
+                ]),
+                html.Li("Je länger der Balken, desto stärker der Einfluss des Merkmals auf genau deine Eingabe."),
+                html.Li("Die Bedingungen in Klammern zeigen, in welchem Werte-Bereich dein Merkmal liegt (z. B. „Kredit-Score > 75,5“).")
+            ]),
+            html.H5("Tipps zum Ausprobieren"),
+            html.Ul([
+                html.Li("Verändere immer nur ein Feld und klicke erneut – so erkennst du sofort den einzelnen Effekt."),
+                html.Li("Teste Grenzwerte: Hebe z. B. den Kredit-Score schrittweise an und beobachte, ab wann der Balken die Seite wechselt."),
+                html.Li("Kombiniere zwei Merkmale: Manchmal neutralisiert ein positives Merkmal ein negatives.")
+            ]),
+            html.P("Viel Spaß beim Experimentieren – und finde heraus, welche Faktoren deine Kreditwürdigkeit wirklich bewegen!")
+        ], className="alert alert-info")
+
+    # ── Rückgabe an Dash ────────────────────────────────────────────
         return (
             html.Div([
+                explanation_box,                                 #  ← Hinweisbox
                 html.H5("Gib deine Wunschwerte ein (leer = Median):"),
                 html.Div(input_fields, style={"columnCount": 3}),
-                dbc.Button("Vorhersage & Erklärung",
-                        id="lime-predict-btn",
-                        n_clicks=0,
-                        color="primary",
-                        className="mt-3"),
+                dbc.Button(
+                    "Vorhersage & Erklärung",
+                    id="lime-predict-btn",
+                    n_clicks=0,
+                    color="primary",
+                    className="mt-3"
+                ),
                 html.Hr(),
                 html.Div(id="lime-pred-output"),
                 dcc.Graph(id="lime-graph")
@@ -420,4 +483,188 @@ def update_visualization(n_clicks, risk_range, min_trades, selected_viz, selecte
             dcc.Graph(figure=fig2),
             report_table,
             metrics_explanation
-        ]), title, metrics_div
+        ]), title, metrics_div    
+    
+    elif selected_viz== "surrogate":
+
+        title = "Surrogatmodell erklärt neuronales Netz (MLP)"
+
+
+        y = LabelEncoder().fit_transform(df["RiskPerformance"])
+
+
+        X = df.drop(columns=["RiskPerformance"])
+
+        # Fehlende Werte im X imputieren (Mean für numerische Features)
+
+        imputer = SimpleImputer(strategy="mean")
+
+        X_imputed = imputer.fit_transform(X)
+
+        X_imputed_df = pd.DataFrame(X_imputed, columns=X.columns)
+
+        X_train, _, y_train, _ = train_test_split(X_imputed_df, y, test_size=0.2, random_state=42)
+
+
+        scaler = StandardScaler()
+
+
+        X_train_scaled = scaler.fit_transform(X_train)
+
+
+        mlp = MLPRegressor(hidden_layer_sizes=(30, 20), max_iter=1000, random_state=1)
+
+
+        mlp.fit(X_train_scaled, y_train)
+
+
+        blackbox_preds = mlp.predict(X_train_scaled)
+
+
+
+
+
+        # Surrogat-Modell (z. B. linear oder baum)
+
+
+        surrogate_type = "linear"  # oder "linear"
+
+
+        goodness, surrogate_fig = build_surrogate_and_figure(
+
+
+            X_train_scaled[:, :1],  # 1 Feature für Visualisierung
+
+
+            blackbox_preds,
+
+
+            feature_names=[X_train.columns[0]],
+
+
+            model=surrogate_type
+
+
+        )
+
+
+
+
+
+        # Erklärungstext
+
+
+        goodness_text = html.P(f"""
+
+
+            Das Surrogatmodell ({surrogate_type}) erklärt etwa {goodness*100:.1f}% der Vorhersagevariabilität 
+
+
+            des neuronalen Netzes – also wie stark es nachvollziehen kann, wie das komplexe Modell entscheidet.
+
+
+        """)
+
+
+
+
+
+        explanation = html.Div([
+
+
+            html.H5("Was zeigt dieses Diagramm?"),
+
+
+            html.P("Das neuronale Netz ist sehr mächtig, aber schwer zu verstehen. Ein einfaches Modell versucht hier, seine Logik zu erklären."),
+
+
+            html.P([
+
+
+                html.Strong("Lineares Modell"), ": erkennt einfache, lineare Zusammenhänge.",
+
+
+                html.Br(),
+
+
+                html.Strong("Entscheidungsbaum"), ": nutzt Regeln zur Erklärung, z. B. Schwellenwerte."
+
+
+            ])
+
+
+        ])
+
+
+
+
+
+        return html.Div([
+
+
+            dcc.Graph(figure=surrogate_fig),
+
+
+            goodness_text,
+
+
+            explanation
+
+
+        ]), title, None
+
+
+@app.callback(
+    [Output("lime-pred-output", "children"),
+     Output("lime-graph", "figure")],
+    Input("lime-predict-btn", "n_clicks"),
+    State({"type": "feat-input", "feature": ALL}, "id"),
+    State({"type": "feat-input", "feature": ALL}, "value"),
+    Input('model-dropdown', 'value'), 
+    prevent_initial_call=True
+)
+
+def predict_and_explain(n_clicks, id_list, value_list, selected_model):
+    model  = model_dict[selected_model]
+    # --- 1 · Werte in richtige Reihenfolge bringen -------------------
+    user_vals = {item["feature"]: val for item, val in zip(id_list, value_list)}
+    instance = [
+        median_dict[f] if user_vals.get(f) is None else user_vals[f]
+        for f in features
+    ]
+
+    # --- 2 · gleiche Vorverarbeitung wie im Training -----------------
+    instance_arr = imputer.transform([instance])
+
+    # --- 3 · Vorhersage ---------------------------------------------
+    proba  = model.predict_proba(instance_arr)[0]   # [P(Bad), P(Good)]
+    pred_class = ("Zuverlässiger Zahler"
+                  if proba[1] >= 0.5 else "Zahlungsprobleme")
+
+    # --- 4 · LIME-Erklärung -----------------------------------------
+    explanation = explainer.explain_instance(
+        instance_arr[0],
+        model.predict_proba,
+        labels=[1],           # 1 = Good
+        num_features=10
+    )
+    desc, weight = zip(*[(d, w) for d, w in explanation.as_list(label=1)])
+
+    # --- 5 · Plot ----------------------------------------------------
+    fig = go.Figure(go.Bar(
+        x=weight, y=desc, orientation="h",
+        text=[f"{w:+.2f}" for w in weight],
+        hovertemplate="%{y}<br>Gewicht: %{x:+.2f}<extra></extra>"
+    ))
+    fig.update_layout(
+        xaxis_title="Einfluss auf Klasse »Zuverlässiger Zahler«",
+        yaxis_title="Feature (Bedingung)",
+        yaxis=dict(autorange="reversed"),
+        margin=dict(l=20, r=20, t=20, b=20)
+    )
+
+    # --- 6 · Textausgabe -------------------------------------------
+    pred_text = (f"**Vorhersage:** {pred_class}  "
+                 f"(P(Zuverlässig) = {proba[1]:.1%})")
+
+    return dcc.Markdown(pred_text), fig

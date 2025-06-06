@@ -36,15 +36,16 @@ X = df[features]
 y = df['target']
 X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.3, random_state=42)
 
-    
-rf_model = RandomForestClassifier(n_estimators=530, class_weight="balanced", max_depth=30, max_features=0.38, min_samples_leaf=4, min_samples_split=7, random_state=42)    
+# ---- Random Forest ----
+rf_model = RandomForestClassifier(n_estimators=530, class_weight="balanced", max_depth=30, max_features=0.38, min_samples_leaf=4, min_samples_split=7, random_state=42)
 rf_model.fit(X_train, y_train)
 
-dt_model = DecisionTreeClassifier(max_depth=7, random_state=42)    
+# ---- Decision Tree ----
+dt_model = DecisionTreeClassifier(max_depth=7, random_state=42)
 dt_model.fit(X_train, y_train)
 
 # ---- Gradient Boosting ----
-gb_model = HistGradientBoostingClassifier(max_iter=300, learning_rate=0.05, max_depth=3, random_state=42)
+gb_model = HistGradientBoostingClassifier(max_iter=400, learning_rate=0.04,max_depth=None, max_leaf_nodes=31, min_samples_leaf=20, l2_regularization=0.01, interaction_cst='pairwise', categorical_features=None, random_state=42)
 gb_model.fit(X_train, y_train)
 
 # ─── Modell-Mapping ────
