@@ -1,12 +1,13 @@
 import pandas as pd
 import numpy as np
-import plotly.express as px
-import plotly.graph_objects as go
-import dash_bootstrap_components as dbc
 from sklearn.model_selection import train_test_split
 from sklearn.ensemble import RandomForestClassifier, HistGradientBoostingClassifier
-from sklearn.tree import DecisionTreeClassifier, export_graphviz
-from sklearn.metrics import confusion_matrix, classification_report, roc_curve, auc
+from sklearn.tree import DecisionTreeClassifier
+from sklearn.impute import SimpleImputer
+from sklearn.pipeline import make_pipeline
+from lime.lime_tabular import LimeTabularExplainer
+from sklearn.preprocessing import StandardScaler
+from sklearn.neural_network import MLPClassifier
 
 # Filepaths
 FILE_PATH='Datensaetze/heloc_openml.csv'
@@ -48,10 +49,30 @@ dt_model.fit(X_train, y_train)
 gb_model = HistGradientBoostingClassifier(max_iter=400, learning_rate=0.04,max_depth=None, max_leaf_nodes=31, min_samples_leaf=20, l2_regularization=0.01, interaction_cst='pairwise', categorical_features=None, random_state=42)
 gb_model.fit(X_train, y_train)
 
+# ---- MLP ---- mit sklearn weil ich nicht noch torch der so schon langen liste an bibliotheken hinzufügen möchte
+# außerdem wäre gpu unterstützung bei so einem einfachem mlp overkill
+mlp_model = make_pipeline(
+    SimpleImputer(strategy="median"),      # füllt NaNs
+    StandardScaler(),                      # z-Score-Scaling beschleunigt MLP-Training
+    MLPClassifier(
+        hidden_layer_sizes=(64, 32),       
+        activation="relu",
+        solver="adam",
+        alpha=1e-3,                        
+        learning_rate_init=1e-3,
+        max_iter=400,
+        random_state=42,
+        verbose=False
+    )
+)
+
+mlp_model.fit(X_train, y_train)
+
 # ─── Modell-Mapping ────
 model_dict = {
     "rf": rf_model,
-    "gb": gb_model
+    "gb": gb_model,
+    "mlp": mlp_model
 }
 
 # -----------------------------------------
@@ -75,8 +96,6 @@ for key, mdl in model_dict.items():
     surrogate_fidelity[key]    = fid
 
 # ---- LIME ----
-from sklearn.impute import SimpleImputer
-from lime.lime_tabular import LimeTabularExplainer
 
 imputer = SimpleImputer(strategy="median").fit(X_train)
 X_train_imp = imputer.transform(X_train)

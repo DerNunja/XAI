@@ -6,23 +6,22 @@ import plotly.express as px                      # ← neu
 import dash_bootstrap_components as dbc
 from dash import dcc, html
 from dash.dependencies import Input, Output, State, ALL
+import re
 
 from sklearn.tree import export_graphviz
-from sklearn.metrics import roc_curve, auc, confusion_matrix, classification_report
+from sklearn.metrics import roc_auc_score, roc_curve, auc, confusion_matrix, classification_report
 from src.Agnostic.surrogate_Models import build_surrogate_and_figure
 import pandas as pd
 import numpy as np
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import StandardScaler, LabelEncoder
 from sklearn.neural_network import MLPRegressor
-from sklearn.linear_model import LinearRegression
-from sklearn.tree import DecisionTreeRegressor, export_text
 import plotly.graph_objects as go
 from dash import html, dcc
 from sklearn.impute import SimpleImputer
 
 from src.Model.models import (
-    df, rf_model, dt_model, features, y_test, X_test,
+    df, rf_model, features, y_test, X_test,
     imputer, explainer, median_dict, model_dict, surrogate_dict, surrogate_fidelity
 )
 from src.Explanations import simplified_terms, get_feature_explanation
@@ -117,7 +116,9 @@ def update_visualization(n_clicks, risk_range, min_trades, selected_viz, selecte
                     id={"type": "feat-input", "feature": f},
                     type="number",
                     placeholder=str(round(median_dict[f], 2)),
-                    debounce=True
+                    debounce=True,
+                    persistence=True,               #  ← NEU
+                    persistence_type="session"      #  ← NEU (oder "local")
                 )
             ], style={"marginBottom": "8px"})
             for f in features
@@ -368,83 +369,175 @@ def update_visualization(n_clicks, risk_range, min_trades, selected_viz, selecte
         
         return dcc.Graph(figure=fig), title, metrics_div
     
-    elif selected_viz == 'roc':
+    elif selected_viz == "roc":
         title = "Genauigkeits-Ansicht"
         if len(filtered_df) < 10:
             return html.P("Nicht genügend Daten für die Ansicht nach Filterung."), title, metrics_div
-        
-        model      = model_dict[selected_model]          # "rf" oder "gb"
-        model_name = "Random Forest" if selected_model == "rf" else "Gradient Boosting"
 
-        # ROC-Kurve berechnen
-        y_scores = model.predict_proba(X_test)[:, 1]
+        # ── Grundergebnisse berechnen ──────────────────────────────────
+        model      = model_dict[selected_model]
+        model_name = {"rf": "Random-Forest",
+                    "gb": "Gradient Boosting",
+                    "mlp": "Neuronales Netz (MLP)"}[selected_model]
+
+        y_scores = model.predict_proba(X_test)[:, 1]          # weiche Scores
         fpr, tpr, _ = roc_curve(y_test, y_scores)
-        roc_auc = auc(fpr, tpr)
-        
-        fig = go.Figure()
-        fig.add_trace(go.Scatter(
-            x=fpr, y=tpr,
-            mode='lines',
-            name=f'{model_name} (AUC = {roc_auc:.3f})',
-            line=dict(color='royalblue', width=2)
-        ))
-        
-        # Zufallslinie hinzufügen
-        fig.add_trace(go.Scatter(
-            x=[0, 1], y=[0, 1],
-            mode='lines',
-            name='Zufälliges Raten',
-            line=dict(color='firebrick', width=2, dash='dash')
-        ))
-        
+        roc_auc     = auc(fpr, tpr)
+
+        model_names = ["Random Forest", "Gradient Boosting", "MLP"]
+        auc_vals, acc_vals, prec_vals, rec_vals, f1_vals = [], [], [], [], []
+
+        for key in ["rf", "gb", "mlp"]:
+            mdl   = model_dict[key]
+            y_scr = mdl.predict_proba(X_test)[:, 1]
+
+            # AUC (schwellen­unabhängig)
+            auc_vals.append(roc_auc_score(y_test, y_scr))
+
+            # Schwelle 0.50
+            y_pred = (y_scr > 0.5).astype(int)
+            acc_vals.append((y_pred == y_test).mean())
+
+            rpt = classification_report(y_test, y_pred, output_dict=True)
+            prec_vals.append(rpt["1"]["precision"])   # Fokus auf Klasse „Zuverlässig“
+            rec_vals.append(rpt["1"]["recall"])
+            f1_vals.append(rpt["1"]["f1-score"])
+
+        fig_bar = go.Figure([
+            go.Bar(name="AUC",       x=model_names, y=auc_vals),
+            go.Bar(name="Accuracy",  x=model_names, y=acc_vals),
+            go.Bar(name="Precision", x=model_names, y=prec_vals),
+            go.Bar(name="Recall",    x=model_names, y=rec_vals),
+            go.Bar(name="F1-Score",  x=model_names, y=f1_vals)
+        ])
+        fig_bar.update_layout(
+            barmode="group",
+            title="Modellvergleich – AUC & Schwellen-Kennzahlen (0.5)",
+            yaxis_title="Wert",
+            height=500,
+            legend=dict(orientation="h", yanchor="bottom",
+                        y=-0.25, xanchor="center", x=0.5)
+        )
+
+        roc_traces = []
+        for key, mdl in model_dict.items():                       #  rf, gb, mlp
+            y_scr  = mdl.predict_proba(X_test)[:, 1]
+            fpr, tpr, _ = roc_curve(y_test, y_scr)
+            roc_auc     = auc(fpr, tpr)
+            name = {"rf":"Random Forest", "gb":"Gradient Boosting", "mlp":"MLP"}[key]
+            roc_traces.append(
+                go.Scatter(x=fpr, y=tpr, mode="lines",
+                        name=f"{name} (AUC = {roc_auc:.3f})")
+            )
+
+        # ── Vergleich - Roc ────────────────────────────────────────────────
+        fig_compare = go.Figure(roc_traces)
+        fig_compare.add_shape(type="line", x0=0, y0=0, x1=1, y1=1,
+                            line=dict(dash="dash", color="grey"))
+        fig_compare.update_layout(
+            title="Modellvergleich – ROC-Kurven",
+            xaxis_title="Falsch-Positiven-Rate",
+            yaxis_title="Richtig-Positiven-Rate",
+            height=550,
+            legend=dict(orientation="h", yanchor="bottom",
+                        y=-0.25, xanchor="center", x=0.5)
+        )
+
+        # ── ROC-Grafik ────────────────────────────────────────────────
+        fig = go.Figure([
+            go.Scatter(
+                x=fpr, y=tpr, mode="lines",
+                name=f"{model_name} (AUC = {roc_auc:.3f})"
+            ),
+            go.Scatter(
+                x=[0, 1], y=[0, 1],
+                mode="lines", name="Zufall", line=dict(dash="dash")
+            )
+        ])
         fig.update_layout(
-            title=f"ROC-Kurve - {model_name}",
-            xaxis_title='Anteil fälschlich abgelehnter guter Kunden',
-            yaxis_title='Anteil richtig erkannter zuverlässiger Kunden',
-            height=600,
-            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
+            title=f"ROC-Kurve – {model_name}",
+            xaxis_title="Falsch-Positiven-Rate",
+            yaxis_title="Richtig-Positiven-Rate",
+            height=600
         )
-        
-        # Confusion Matrix
-        y_pred_binary = (y_scores > 0.5).astype(int)
-        cm = confusion_matrix(y_test, y_pred_binary)
-        report  = classification_report(y_test, y_pred_binary, output_dict=True)
-        
-        # Confusion Matrix als Heatmap mit verständlicheren Beschriftungen
+
+        # ── Confusion-Matrix + Bericht (Threshold = 0.5) ─────────────
+        y_pred = (y_scores > 0.5).astype(int)
+        cm     = confusion_matrix(y_test, y_pred)
+        report = classification_report(y_test, y_pred, output_dict=True)
+
         fig2 = px.imshow(
-            cm,
-            labels=dict(x="Vorhersage des Systems", y="Tatsächliches Verhalten", color="Anzahl Personen"),
-            x=['Wird Probleme haben', 'Wird pünktlich zahlen'],
-            y=['Hat Probleme gehabt', 'Hat pünktlich gezahlt'],
-            text_auto=True,
-            color_continuous_scale='Blues'
+            cm, text_auto=True, color_continuous_scale="Blues",
+            labels=dict(x="Vorhersage", y="Tatsächliches", color="Anzahl"),
+            x=["Probleme", "Zuverlässig"], y=["Probleme", "Zuverlässig"],
+            title="Konfusionsmatrix"
         )
-        
-        fig2.update_layout(
-            title='Vorhersage-Genauigkeitstabelle',
-            height=400
-        )
-        
-        # Berichte
-        report = classification_report(y_test, y_pred_binary, output_dict=True)
-        
-        # Report als Tabelle formatieren mit alltagssprachlichen Begriffen
+        fig2.update_layout(height=400)
+
+        # ── Erklär-Box (NEU) ──────────────────────────────────────────
+        explain_box = html.Div([
+            html.H5("Was sehe ich hier?"),
+            html.P([
+                html.B("ROC-Kurve"), " (oben): zeigt, wie gut das Modell ",
+                "„Zuverlässige Zahler“ von „Problemfällen“ trennt – ",
+                "für alle denkbaren Schwellenwerte. ",
+                html.B("AUC"), " ist die Fläche unter dieser Kurve: ",
+                "1 = perfekte Trennung  /  0,5 = reines Raten."
+            ]),
+            html.P([
+                html.B("Konfusionsmatrix"), " (unten links): vergleicht Modell-Entscheidungen ",
+                "bei fester Schwelle 0,5 mit den tatsächlichen Klassen. ",
+                "• ", html.Span("Oben links", style={"color":"royalblue"}),
+                " = richtig erkannte Problemfälle. ",
+                "• ", html.Span("Unten rechts", style={"color":"royalblue"}),
+                " = richtig erkannte Zuverlässige."
+            ]),
+            html.P([
+                html.B("Precision / Recall / F1"), " (unten rechts): ",
+                "geben an, wie präzise und vollständig das Modell jede Gruppe erkennt. ",
+                html.I("Treffsicherheit"), " = Präzision, ",
+                html.I("Erkennungsrate"), " = Recall."
+            ]),
+            html.Ul([
+                html.Li([
+                    html.B("Precision"), ": Wie oft lag das Modell richtig, ",
+                    "wenn es „Zuverlässig“ vorhersagte?"
+                ]),
+                html.Li([
+                    html.B("Recall"), ": Wie viele der tatsächlich Zuverlässigen ",
+                    "wurden erkannt (nicht fälschlich abgelehnt)?"
+                ]),
+                html.Li([
+                    html.B("F1-Wert"), ": Harmonie-Mittel aus Precision & Recall."
+                ]),
+                html.Li([
+                    html.B("Gesamtgenauigkeit"), ": Anteil aller richtigen Treffer ",
+                    "über beide Gruppen."
+                ])
+            ]),
+        ], className="alert alert-info")
+
+        # ── Tabelle mit Kennzahlen ────────────────────────────────────
         report_table = html.Div([
-            html.H5("Wie gut ist die Vorhersage?"),
+            html.H5("Klassifikationsbericht"),
             html.Table([
                 html.Thead(
-                    html.Tr([html.Th("Personengruppe"), html.Th("Treffsicherheit"), html.Th("Erkennungsrate"), html.Th("Gesamtwert"), html.Th("Anzahl Fälle")])
+                    html.Tr([
+                        html.Th("Gruppe"), html.Th("Precision"),
+                        html.Th("Recall"), html.Th("F1-Wert"),
+                        html.Th("Fälle")
+                    ])
                 ),
                 html.Tbody([
                     html.Tr([
-                        html.Td("Personen mit Zahlungsproblemen"),
+                        html.Td("Problemfälle"),
                         html.Td(f"{report['0']['precision']:.3f}"),
                         html.Td(f"{report['0']['recall']:.3f}"),
                         html.Td(f"{report['0']['f1-score']:.3f}"),
                         html.Td(f"{report['0']['support']}")
                     ]),
                     html.Tr([
-                        html.Td("Pünktliche Zahler"),
+                        html.Td("Zuverlässige Zahler"),
                         html.Td(f"{report['1']['precision']:.3f}"),
                         html.Td(f"{report['1']['recall']:.3f}"),
                         html.Td(f"{report['1']['f1-score']:.3f}"),
@@ -457,34 +550,18 @@ def update_visualization(n_clicks, risk_range, min_trades, selected_viz, selecte
                 ])
             ], className="table table-striped")
         ])
-        
-        # Erläuterung der Metriken für Laien
-        metrics_explanation = html.Div([
-            html.H5("Was bedeuten diese Zahlen?", className="mt-3"),
-            html.P([
-                html.Strong("Treffsicherheit"), ": Wenn das Modell jemanden als 'zuverlässig' einstuft, wie oft stimmt das wirklich? (1.0 = perfekt)"
-            ]),
-            html.P([
-                html.Strong("Erkennungsrate"), ": Wie viele gute Kunden werden tatsächlich erkannt und nicht fälschlich abgelehnt? (1.0 = perfekt)"
-            ]),
-            html.P([
-                html.Strong("Gesamtwert"), ": Eine Kombination aus beiden obigen Werten. Höher ist besser. (1.0 = perfekt)"
-            ]),
-            html.P([
-                html.Strong("Die Grafik oben"), ": Je mehr die blaue Linie nach oben links geht, desto besser ist das System. Die rote gestrichelte Linie zeigt, wie gut blindes Raten wäre."
-            ]),
-            html.P([
-                html.Strong("Die Tabelle in der Mitte"), ": Zeigt, wie oft das System richtig und falsch lag. Idealerweise sollten die Zahlen oben links und unten rechts groß sein."
-            ])
-        ])
-        
+
+        # ── Rückgabe ──────────────────────────────────────────────────
         return html.Div([
+            explain_box,
+            report_table,           # ← verständliche Anleitung
             dcc.Graph(figure=fig),
             dcc.Graph(figure=fig2),
-            report_table,
-            metrics_explanation
-        ]), title, metrics_div    
+            dcc.Graph(figure=fig_compare),
+            dcc.Graph(figure=fig_bar),
+        ]), title, metrics_div
     
+
     elif selected_viz== "surrogate":
 
         title = "Surrogatmodell erklärt neuronales Netz (MLP)"
@@ -614,6 +691,13 @@ def update_visualization(n_clicks, risk_range, min_trades, selected_viz, selecte
         ]), title, None
 
 
+def replace_with_simple(term):
+    m = re.match(r"\s*([^\s><=]+)(.*)", term)
+    if not m:
+        return term
+    feat, rest = m.groups()
+    return f"{simplified_terms.get(feat, feat)}{rest}"
+
 @app.callback(
     [Output("lime-pred-output", "children"),
      Output("lime-graph", "figure")],
@@ -648,14 +732,24 @@ def predict_and_explain(n_clicks, id_list, value_list, selected_model):
         labels=[1],           # 1 = Good
         num_features=10
     )
-    desc, weight = zip(*[(d, w) for d, w in explanation.as_list(label=1)])
+
+    desc_raw, weight = zip(*explanation.as_list(label=1))
+    desc = [replace_with_simple(d) for d in desc_raw]
 
     # --- 5 · Plot ----------------------------------------------------
+    bar_colors = ["rgba(44,160,44,0.8)"  if w > 0        # grün für +Einfluss
+              else "rgba(214,39,40,0.8)"             # rot  für –Einfluss
+              for w in weight]
+
     fig = go.Figure(go.Bar(
-        x=weight, y=desc, orientation="h",
+        x=weight,
+        y=desc,
+        orientation="h",
+        marker_color=bar_colors,        #  ← Farben pro Balken
         text=[f"{w:+.2f}" for w in weight],
         hovertemplate="%{y}<br>Gewicht: %{x:+.2f}<extra></extra>"
     ))
+
     fig.update_layout(
         xaxis_title="Einfluss auf Klasse »Zuverlässiger Zahler«",
         yaxis_title="Feature (Bedingung)",

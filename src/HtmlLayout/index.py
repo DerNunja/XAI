@@ -62,7 +62,8 @@ app.layout = dbc.Container([
                         id='model-dropdown',
                         options=[
                             {'label': 'Random Forest',      'value': 'rf'},
-                            {'label': 'Gradient Boosting',  'value': 'gb'}
+                            {'label': 'Gradient Boosting',  'value': 'gb'},
+                            {"label": "Neural Net (MLP)",   "value": "mlp"}
                         ],
                         value='rf',            # Default
                         clearable=False
